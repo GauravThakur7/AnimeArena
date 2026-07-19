@@ -240,6 +240,7 @@ function CombatStateMachine._registerDefaultStates(self: CombatStateMachine)
 			CombatState.Sprinting,
 			CombatState.Walking,
 			CombatState.Running,
+			CombatState.Sliding,
 			CombatState.UsingUltimate,
 			CombatState.AirAttacking,
 			CombatState.GroundSlamming,
@@ -263,6 +264,7 @@ function CombatStateMachine._registerDefaultStates(self: CombatStateMachine)
 				CombatState.Dashing,
 				CombatState.Backstepping,
 				CombatState.Sidestepping,
+				CombatState.Sliding,
 				CombatState.UsingUltimate,
 				CombatState.Staggered,
 				CombatState.Launched,
@@ -555,6 +557,19 @@ function CombatStateMachine._registerDefaultStates(self: CombatStateMachine)
 		allowedTransitions = {
 			CombatState.Grounded,
 			CombatState.Dead,
+		},
+	}
+
+	-- Sliding: sprint cancel into low-profile slide
+	self._stateConfigs[CombatState.Sliding] = {
+		canCancel = false,
+		duration = 18, -- ~0.3 seconds
+		autoTransitionTo = CombatState.Idle,
+		allowedTransitions = {
+			CombatState.Idle,
+			CombatState.Attacking, -- slide attack
+			CombatState.Dead,
+			CombatState.Staggered,
 		},
 	}
 

@@ -101,11 +101,14 @@ function MovementController.Init(self: MovementController, container: any)
 		self:_onJumpRequest()
 	end)
 
-	-- Fast fall (S key while airborne)
+	-- Fast fall (S key while airborne) and Slide (C key while sprinting)
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed then return end
 		if input.KeyCode == Enum.KeyCode.S and not self._isGrounded then
 			self._fastFalling = true
+		end
+		if input.KeyCode == Enum.KeyCode.C then
+			self:_trySlide()
 		end
 	end)
 end
@@ -153,7 +156,7 @@ function MovementController._movementTick(self: MovementController, dt: number)
 		return
 	end
 
-	-- If a movement action (dash/roll/backstep) is active, let it drive movement
+	-- If a movement action (dash/roll/backstep/slide) is active, let it drive movement
 	if self._actions:IsActive() then
 		local stillActive = self._actions:Tick(dt)
 		if not stillActive then
@@ -185,8 +188,24 @@ function MovementController._movementTick(self: MovementController, dt: number)
 	end
 
 	-- Sprint toggle: hold shift
-	self._isSprinting = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	local wantsSprint = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 		and moveDir.Magnitude > 0.1
+
+	-- Sprint stamina drain
+	if wantsSprint and self:_canSprint() then
+		local staminaOk = self._combatController:GetStamina() > 0
+		if staminaOk then
+			self._isSprinting = true
+			-- Drain stamina (consume via server, predict locally)
+			self._combatController._stamina:Consume(Constants.STAMINA_COST_SPRINT_PER_SECOND * dt)
+		else
+			-- Out of stamina, force back to run
+			self._isSprinting = false
+			targetSpeed = Constants.BASE_RUN_SPEED
+		end
+	else
+		self._isSprinting = false
+	end
 
 	-- Update momentum
 	self._momentum:SetTargetSpeed(targetSpeed)
@@ -345,6 +364,21 @@ function MovementController._onJumpRequest(self: MovementController)
 		self._jumpCount = 1
 		self._fastFalling = false
 		self.OnJump:Fire(1)
+	elseif self:_canWallJump() then
+		-- Wall jump: lateral boost off a nearby wall
+		local wallNormal = self:_getWallNormal()
+		if wallNormal then
+			self._jumpCount = 1 -- reset one jump after wall jump
+			self._fastFalling = false
+			local upBoost = self._humanoid.JumpPower * 0.75
+			local lateralBoost = wallNormal * 18
+			self._rootPart.AssemblyLinearVelocity = Vector3.new(
+				lateralBoost.X,
+				upBoost,
+				lateralBoost.Z
+			)
+			self.OnJump:Fire(3) -- 3 = wall jump
+		end
 	elseif self._jumpCount < self._maxJumps then
 		-- Double jump
 		self._jumpCount += 1
@@ -360,6 +394,80 @@ end
 -- ═══════════════════════════════════════════════════
 -- HELPERS
 -- ═══════════════════════════════════════════════════
+
+function MovementController._trySlide(self: MovementController)
+	if not self._rootPart or not self._isGrounded then
+		return
+	end
+
+	-- Must be sprinting or moving fast to slide
+	if self._momentum:GetSpeed() < Constants.BASE_RUN_SPEED * 0.8 then
+		return
+	end
+
+	-- Check combat state allows sliding
+	local combatState = self._combatController:GetState()
+	if combatState ~= CombatState.Idle
+		and combatState ~= CombatState.Running
+		and combatState ~= CombatState.Sprinting then
+		return
+	end
+
+	-- Execute slide in movement direction
+	local direction = self._momentum:GetDirection()
+	if direction.Magnitude < 0.1 then
+		direction = self._rootPart.CFrame.LookVector
+	end
+	direction = Vector3.new(direction.X, 0, direction.Z).Unit
+
+	self._actions:StartSlide(direction, self._rootPart.Position)
+	self._momentum:HardStop()
+end
+
+function MovementController._canWallJump(self: MovementController): boolean
+	if self._isGrounded then
+		return false
+	end
+	return self:_getWallNormal() ~= nil
+end
+
+function MovementController._getWallNormal(self: MovementController): Vector3?
+	if not self._rootPart then
+		return nil
+	end
+
+	-- Raycast in 4 cardinal directions looking for a wall within 2.5 studs
+	local origin = self._rootPart.Position
+	local directions = {
+		self._rootPart.CFrame.LookVector,
+		-self._rootPart.CFrame.LookVector,
+		self._rootPart.CFrame.RightVector,
+		-self._rootPart.CFrame.RightVector,
+	}
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterDescendantsInstances = { self._rootPart.Parent :: Instance }
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	for _, dir in directions do
+		local flatDir = Vector3.new(dir.X, 0, dir.Z)
+		if flatDir.Magnitude < 0.1 then
+			continue
+		end
+		flatDir = flatDir.Unit
+
+		local result = workspace:Raycast(origin, flatDir * 2.5, rayParams)
+		if result and result.Normal then
+			-- Must be a vertical wall (normal mostly horizontal)
+			local normalY = math.abs(result.Normal.Y)
+			if normalY < 0.3 then
+				return result.Normal
+			end
+		end
+	end
+
+	return nil
+end
 
 function MovementController._canMove(self: MovementController, combatState: string): boolean
 	local lockedStates = {

@@ -70,6 +70,7 @@ function CombatService.Init(self: CombatService, _container: any)
 	self._network:RegisterEvent("CombatStateSync")
 	self._network:RegisterUnreliableEvent("PositionSync")
 	self._network:RegisterUnreliableEvent("StateDelta")
+	self._network:RegisterUnreliableEvent("MovementState")
 
 	-- Set rate limits
 	self._rateLimiter:SetLimit("Attack", 10)

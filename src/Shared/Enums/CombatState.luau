@@ -34,6 +34,7 @@ local CombatState = {
 	WallBounce = "WallBounce",
 	GroundBounce = "GroundBounce",
 	Ragdoll = "Ragdoll",
+	Sliding = "Sliding",
 	Dead = "Dead",
 }
 

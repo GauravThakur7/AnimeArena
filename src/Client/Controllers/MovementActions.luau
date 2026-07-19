@@ -93,6 +93,20 @@ function MovementActions.StartBackstep(self: MovementActions, direction: Vector3
 end
 
 --[[
+	Start a slide action. Faster than roll, lower profile, shorter duration.
+]]
+function MovementActions.StartSlide(self: MovementActions, direction: Vector3, startPos: Vector3)
+	self._active = {
+		Type = "Slide" :: ActionType,
+		Direction = direction.Unit,
+		Distance = 14, -- slightly longer than dash
+		Duration = 0.3,
+		Elapsed = 0,
+		StartPosition = startPos,
+	}
+end
+
+--[[
 	Advance the active action by dt seconds.
 	Applies displacement to the root part using velocity.
 	Returns true if action is still active, false if completed.

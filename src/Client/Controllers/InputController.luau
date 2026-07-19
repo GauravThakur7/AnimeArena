@@ -94,8 +94,8 @@ function InputController._onInputBegan(self: InputController, input: InputObject
 		return
 	end
 
-	-- Dodge/Roll: Space
-	if keyCode == Enum.KeyCode.Space then
+	-- Dodge/Roll: Left Alt
+	if keyCode == Enum.KeyCode.LeftAlt then
 		self.OnDodgeInput:Fire("Roll")
 		return
 	end

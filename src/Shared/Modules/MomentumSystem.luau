@@ -39,12 +39,12 @@ export type MomentumSystem = typeof(setmetatable({} :: {
 local DEFAULT_CONFIG: MomentumConfig = {
 	MaxWalkSpeed = 12,
 	MaxRunSpeed = 20,
-	MaxSprintSpeed = 28,
-	Acceleration = 80, -- reaches run speed in ~0.25s
-	Deceleration = 100, -- stops in ~0.2s from run speed
-	TurnDeceleration = 40, -- extra slowdown on sharp turns
-	AirAcceleration = 30,
-	AirDeceleration = 20,
+	MaxSprintSpeed = 22,
+	Acceleration = 50, -- reaches run speed in ~0.4s
+	Deceleration = 80, -- stops in ~0.25s from run speed
+	TurnDeceleration = 30, -- extra slowdown on sharp turns
+	AirAcceleration = 25,
+	AirDeceleration = 15,
 }
 
 function MomentumSystem.new(config: MomentumConfig?): MomentumSystem
