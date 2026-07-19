@@ -373,7 +373,6 @@ function CombatController._onServerState(self: CombatController, data: any)
 	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
 	DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState} (seq: {serverProcessed}/{self._sequenceId})`)
 	self._stateMachine:ForceState(serverCombatState)
-end
 
 	-- Reconcile stamina
 	local serverStamina = data.Stamina
