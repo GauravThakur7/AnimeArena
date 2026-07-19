@@ -72,7 +72,7 @@ local Constants = {
 	FULL_SYNC_RATE = 10, -- Hz (periodic full state)
 
 	-- Anti-cheat
-	SPEED_TOLERANCE = 1.2, -- 20% tolerance on movement speed
+	SPEED_TOLERANCE = 2.5, -- 150% tolerance on movement speed (accounts for physics jitter)
 	MAX_REMOTE_DRIFT_SECONDS = 0.5, -- timestamp validity window
 	DISCONNECT_TIMEOUT = 5.0, -- seconds before marking disconnected
 	RANKED_RECONNECT_WINDOW = 30.0, -- seconds to reconnect in ranked
