@@ -16,6 +16,7 @@ local PositionHistory = require(script.PositionHistory)
 local LagCompensation = require(script.LagCompensation)
 local DeltaCompressor = require(script.DeltaCompressor)
 local MomentumSystem = require(script.MomentumSystem)
+local AbilitySystem = require(script.AbilitySystem)
 
 return {
 	CombatStateMachine = CombatStateMachine,
@@ -30,4 +31,5 @@ return {
 	LagCompensation = LagCompensation,
 	DeltaCompressor = DeltaCompressor,
 	MomentumSystem = MomentumSystem,
+	AbilitySystem = AbilitySystem,
 }

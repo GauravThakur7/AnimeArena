@@ -139,7 +139,7 @@ end
 	Attempt to perform a light attack.
 	Returns true if the attack was accepted.
 ]]
-function CombatEntity.TryLightAttack(self: CombatEntity, frameData: any): boolean
+function CombatEntity.TryLightAttack(self: CombatEntity, frameData: any, staminaCost: number?): boolean
 	local context = self:_buildContext()
 	local currentState = self.StateMachine:GetState()
 
@@ -154,8 +154,9 @@ function CombatEntity.TryLightAttack(self: CombatEntity, frameData: any): boolea
 		return false
 	end
 
-	-- Consume stamina
-	if not self.Stamina:Consume(Constants.STAMINA_COST_LIGHT) then
+	-- Consume stamina (use provided cost or default)
+	local cost = staminaCost or Constants.STAMINA_COST_LIGHT
+	if not self.Stamina:Consume(cost) then
 		self.StateMachine:ForceState(CombatState.Idle)
 		return false
 	end
@@ -169,14 +170,15 @@ end
 --[[
 	Attempt to perform a heavy attack.
 ]]
-function CombatEntity.TryHeavyAttack(self: CombatEntity, frameData: any): boolean
+function CombatEntity.TryHeavyAttack(self: CombatEntity, frameData: any, staminaCost: number?): boolean
 	local context = self:_buildContext()
 
 	if not self.StateMachine:TryTransition(CombatState.HeavyAttacking, context) then
 		return false
 	end
 
-	if not self.Stamina:Consume(Constants.STAMINA_COST_HEAVY) then
+	local cost = staminaCost or Constants.STAMINA_COST_HEAVY
+	if not self.Stamina:Consume(cost) then
 		self.StateMachine:ForceState(CombatState.Idle)
 		return false
 	end

@@ -21,6 +21,7 @@ local DebugLog = require(ReplicatedStorage.Shared.Util.DebugLog)
 local CombatEntity = require(script.Parent.Parent.Components.CombatEntity)
 local LatencyTracker = require(script.Parent.Parent.Components.LatencyTracker)
 local PositionValidator = require(script.Parent.Parent.Components.PositionValidator)
+local WeaponHandler = require(script.Parent.Parent.Components.WeaponHandler)
 local PositionHistory = Shared.Modules.PositionHistory
 local LagCompensation = Shared.Modules.LagCompensation
 local DeltaCompressor = Shared.Modules.DeltaCompressor
@@ -54,6 +55,7 @@ function CombatService.new(network: any): CombatService
 	self._lagCompensation = LagCompensation.new()
 	self._deltaCompressor = DeltaCompressor.new()
 	self._positionHistories = {} :: { [Player]: typeof(PositionHistory.new()) }
+	self._weaponHandlers = {} :: { [Player]: typeof(WeaponHandler.new("")) }
 
 	return self
 end
@@ -65,6 +67,7 @@ function CombatService.Init(self: CombatService, _container: any)
 	self._network:RegisterEvent("ParryRequest")
 	self._network:RegisterEvent("DodgeRequest")
 	self._network:RegisterEvent("UltimateRequest")
+	self._network:RegisterEvent("SpecialRequest")
 	self._network:RegisterEvent("HitConfirm")
 	self._network:RegisterEvent("StateUpdate")
 	self._network:RegisterEvent("CombatStateSync")
@@ -78,6 +81,7 @@ function CombatService.Init(self: CombatService, _container: any)
 	self._rateLimiter:SetLimit("Parry", 5)
 	self._rateLimiter:SetLimit("Dodge", 8)
 	self._rateLimiter:SetLimit("Ultimate", 1)
+	self._rateLimiter:SetLimit("Special", 2)
 
 	-- Register remote handlers
 	self._network:OnServerEvent("AttackRequest", function(player: Player, data: any)
@@ -98,6 +102,10 @@ function CombatService.Init(self: CombatService, _container: any)
 
 	self._network:OnServerEvent("UltimateRequest", function(player: Player, data: any)
 		self:_handleUltimateRequest(player, data)
+	end)
+
+	self._network:OnServerEvent("SpecialRequest", function(player: Player, data: any)
+		self:_handleSpecialRequest(player, data)
 	end)
 
 	-- Phase 3: Initialize networking subsystems
@@ -169,6 +177,17 @@ function CombatService._simulationTick(self: CombatService)
 	for player, entity in self._entities do
 		entity.Tick(entity, dt)
 
+		-- Check if combo dropped → reset weapon combo position
+		local weaponHandler = self._weaponHandlers[player]
+		if weaponHandler and entity.Combo:GetHitCount() == 0 then
+			weaponHandler:ResetCombo()
+		end
+
+		-- Tick ability cooldowns
+		if entity._abilitySystem then
+			entity._abilitySystem:Tick(dt)
+		end
+
 		-- Update position from character
 		local char = player.Character
 		if char then
@@ -220,8 +239,12 @@ function CombatService._runHitDetection(self: CombatService, attacker: Player, a
 	local attackerLatency = self._latencyTracker:GetLatency(attacker)
 	local rewindTick = self._lagCompensation:CalculateRewindTick(self._serverTick, attackerLatency)
 
-	local hitboxSize = Vector3.new(5, 4, 6) -- default (overridden by weapon data in Phase 5)
-	local hitboxOffset = Vector3.new(0, 0, -3) -- forward offset
+	-- Get hitbox dimensions from weapon data
+	local weaponHandler = self._weaponHandlers[attacker]
+	local comboPos = if weaponHandler then weaponHandler:GetComboPosition() else 1
+	local attackType = if attackerEntity.StateMachine:GetState() == "HeavyAttacking" then "Heavy" else "Light"
+	local hitboxSize = if weaponHandler then weaponHandler:GetHitboxSize(attackType, comboPos) else Vector3.new(5, 4, 6)
+	local hitboxOffset = if weaponHandler then weaponHandler:GetHitboxOffset(attackType, comboPos) else Vector3.new(0, 0, -3)
 
 	for targetPlayer, targetEntity in self._entities do
 		if targetPlayer == attacker then
@@ -326,20 +349,26 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 	end
 
 	-- Calculate damage
+	local weaponHandler = self._weaponHandlers[attacker]
+	local attackData = if weaponHandler then weaponHandler:GetAttackData("Light", weaponHandler:GetComboPosition()) else nil
+	local baseDamage = if attackData then attackData.Damage else 15
+	local poiseDamage = if attackData then attackData.PoiseDamage else 20
+	local hitstunFrames = if attackData then attackData.FrameData.Hitstun else 18
+
 	local damageResult = DamageCalculator.Calculate({
-		BaseDamage = 15, -- TODO: get from weapon/attack data
+		BaseDamage = baseDamage,
 		ComboHitNumber = attackerEntity.Combo:GetHitCount(),
 		IsBlocked = isBlocked,
 		HasArmor = targetEntity.StateMachine:HasArmor(),
 		HurtboxZone = hit.HurtboxZone,
 		IsCritical = false,
-		PoiseDamage = 20, -- TODO: get from attack data
+		PoiseDamage = poiseDamage,
 		AttackerBuff = 1.0,
 		DefenderBuff = 1.0,
 	})
 
 	-- Apply damage
-	local hitstun = DamageCalculator.CalculateHitstun(18, attackerEntity.Combo:GetHitCount())
+	local hitstun = DamageCalculator.CalculateHitstun(hitstunFrames, attackerEntity.Combo:GetHitCount())
 
 	if isBlocked then
 		-- Block: chip stamina damage, reduced hitstun
@@ -447,25 +476,38 @@ function CombatService._handleAttackRequest(self: CombatService, player: Player,
 		return
 	end
 
-	-- Default frame data (will be overridden by weapon system in Phase 5)
-	local frameData = {
-		Startup = 6,
-		Active = 4,
-		Recovery = 12,
-		CancelWindow = { 8, 9, 10 }, -- frames 8-10 of recovery allow cancel
-	}
+	-- Get weapon data for this player
+	local weaponHandler = self._weaponHandlers[player]
+	local comboPos = if weaponHandler then weaponHandler:GetComboPosition() + 1 else 1
+	local attackData = if weaponHandler then weaponHandler:GetAttackData(data.AttackType, comboPos) else nil
+
+	-- Resolve frame data from weapon (fallback to defaults if no weapon)
+	local frameData: any
+	local staminaCost: number
+
+	if attackData then
+		frameData = attackData.FrameData
+		staminaCost = attackData.StaminaCost
+	else
+		-- Fallback defaults
+		if data.AttackType == "Heavy" then
+			frameData = { Startup = 14, Active = 6, Recovery = 22, CancelWindow = nil }
+			staminaCost = 15
+		else
+			frameData = { Startup = 6, Active = 4, Recovery = 12, CancelWindow = { 8, 9, 10 } }
+			staminaCost = 8
+		end
+	end
+
+	-- Apply weapon stamina cost modifier
+	local costModifier = if weaponHandler then weaponHandler:GetStaminaCostModifier() else 1.0
+	local finalCost = math.floor(staminaCost * costModifier)
 
 	local success: boolean
 	if data.AttackType == "Heavy" then
-		frameData = {
-			Startup = 14,
-			Active = 6,
-			Recovery = 22,
-			CancelWindow = nil,
-		}
-		success = entity:TryHeavyAttack(frameData)
+		success = entity:TryHeavyAttack(frameData, finalCost)
 	else
-		success = entity:TryLightAttack(frameData)
+		success = entity:TryLightAttack(frameData, finalCost)
 	end
 
 	if success then
@@ -585,6 +627,83 @@ function CombatService._handleUltimateRequest(self: CombatService, player: Playe
 	end
 end
 
+function CombatService._handleSpecialRequest(self: CombatService, player: Player, data: any)
+	if not self._rateLimiter:Check(player, "Special") then
+		return
+	end
+
+	local entity = self._entities[player]
+	if not entity or not entity.IsAlive then
+		return
+	end
+
+	-- Must be in a state that allows actions
+	if not entity.StateMachine:CanAct() then
+		DebugLog.Log("Combat", `{player.Name} SPECIAL: REJECTED (can't act) | State: {entity.StateMachine:GetState()}`)
+		return
+	end
+
+	-- Get weapon's special skill data
+	local weaponHandler = self._weaponHandlers[player]
+	if not weaponHandler then
+		return
+	end
+
+	local config = weaponHandler:GetConfig()
+	if not config or not config.SpecialSkill then
+		return
+	end
+
+	local special = config.SpecialSkill
+	local staminaCost = special.StaminaCost * weaponHandler:GetStaminaCostModifier()
+
+	-- Check stamina
+	if not entity.Stamina:CanAfford(math.floor(staminaCost)) then
+		DebugLog.Log("Combat", `{player.Name} SPECIAL: REJECTED (no stamina)`)
+		return
+	end
+
+	-- Check cooldown via AbilitySystem (stored on entity)
+	if not entity._abilitySystem then
+		local AbilitySystem = Shared.Modules.AbilitySystem
+		entity._abilitySystem = AbilitySystem.new(config)
+	end
+
+	if not entity._abilitySystem:TrySpecial(entity.Stamina:GetCurrent()) then
+		DebugLog.Log("Combat", `{player.Name} SPECIAL: REJECTED (on cooldown)`)
+		return
+	end
+
+	-- Consume stamina
+	entity.Stamina:Consume(math.floor(staminaCost))
+
+	-- Apply damage to nearby enemies (simple AoE for now)
+	local damage = special.Damage or 25
+	for targetPlayer, targetEntity in self._entities do
+		if targetPlayer == player then continue end
+		if not targetEntity.IsAlive then continue end
+
+		local dist = (entity.Position - targetEntity.Position).Magnitude
+		if dist <= 12 then -- special skill range
+			targetEntity:TakeDamage(damage, 30, 20)
+			self._network:FireAllClients("HitConfirm", {
+				AttackerId = player.UserId,
+				TargetId = targetPlayer.UserId,
+				Damage = damage,
+				HitType = "Special",
+				Position = targetEntity.Position,
+				Tick = self._serverTick,
+			})
+		end
+	end
+
+	DebugLog.Log("Combat", `{player.Name} SPECIAL: ACTIVATED ({special.Name}) | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
+
+	if data and typeof(data) == "table" and data.SequenceId then
+		entity.LastProcessedSequence = data.SequenceId
+	end
+end
+
 -- ═══════════════════════════════════════════════════
 -- ENTITY MANAGEMENT
 -- ═══════════════════════════════════════════════════
@@ -599,6 +718,9 @@ function CombatService._createEntity(self: CombatService, player: Player)
 
 	-- Phase 3: Create position history buffer
 	self._positionHistories[player] = PositionHistory.new()
+
+	-- Phase 5: Create weapon handler (default to Katana)
+	self._weaponHandlers[player] = WeaponHandler.new("Katana")
 
 	-- Phase 3: Register with position validator
 	local char = player.Character
@@ -632,6 +754,7 @@ function CombatService._removeEntity(self: CombatService, player: Player)
 	self._positionHistories[player] = nil
 	self._positionValidator:RemovePlayer(player)
 	self._deltaCompressor:RemovePlayer(player.UserId)
+	self._weaponHandlers[player] = nil
 end
 
 return CombatService

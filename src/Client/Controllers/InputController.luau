@@ -32,6 +32,7 @@ function InputController.new(): InputController
 	self.OnMovementInput = Signal.new()
 	self.OnUltimateInput = Signal.new()
 	self.OnParryInput = Signal.new()
+	self.OnSpecialInput = Signal.new()
 	self._blockHeld = false
 	return self
 end
@@ -115,6 +116,12 @@ function InputController._onInputBegan(self: InputController, input: InputObject
 	-- Ultimate: R
 	if keyCode == Enum.KeyCode.R then
 		self.OnUltimateInput:Fire()
+		return
+	end
+
+	-- Special Skill: F
+	if keyCode == Enum.KeyCode.F then
+		self.OnSpecialInput:Fire()
 		return
 	end
 end

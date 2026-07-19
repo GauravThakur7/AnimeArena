@@ -75,6 +75,10 @@ function CombatController.Init(self: CombatController, container: any)
 		self:_onUltimateInput()
 	end)
 
+	self._inputController.OnSpecialInput:Connect(function()
+		self:_onSpecialInput()
+	end)
+
 	-- Listen for server state updates (reliable full sync)
 	self._network:OnClientEvent("StateUpdate", function(data: any)
 		self:_onServerState(data)
@@ -327,6 +331,17 @@ function CombatController._onUltimateInput(self: CombatController)
 
 	self._sequenceId += 1
 	self._network:FireServer("UltimateRequest", {
+		Timestamp = workspace:GetServerTimeNow(),
+		SequenceId = self._sequenceId,
+	})
+end
+
+function CombatController._onSpecialInput(self: CombatController)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Special skill input | State: {self._stateMachine:GetState()}`)
+
+	self._sequenceId += 1
+	self._network:FireServer("SpecialRequest", {
 		Timestamp = workspace:GetServerTimeNow(),
 		SequenceId = self._sequenceId,
 	})

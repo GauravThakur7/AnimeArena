@@ -2,13 +2,19 @@
 --[[
 	Weapons/init.luau
 	Weapon registry. Loads all weapon configs and provides lookup.
-	Weapon data modules added in Phase 5.
 ]]
+
+local Katana = require(script.Katana)
+local Greatsword = require(script.Greatsword)
+local DualSwords = require(script.DualSwords)
 
 local WeaponRegistry = {}
 
--- Weapon configs will be registered here in Phase 5
-local _configs: { [string]: any } = {}
+local _configs: { [string]: any } = {
+	Katana = Katana,
+	Greatsword = Greatsword,
+	DualSwords = DualSwords,
+}
 
 function WeaponRegistry.Get(weaponId: string): any?
 	return _configs[weaponId]
