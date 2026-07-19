@@ -12,8 +12,7 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = require(ReplicatedStorage.Shared)
-local Constants = Shared.Data.Constants
+local Constants = require(ReplicatedStorage.Shared.Data.Constants)
 
 export type BufferedInput = {
 	Action: string,

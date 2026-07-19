@@ -17,9 +17,8 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Shared = require(ReplicatedStorage.Shared)
-local CombatState = Shared.Enums.CombatState
-local Constants = Shared.Data.Constants
+local CombatState = require(ReplicatedStorage.Shared.Enums.CombatState)
+local Constants = require(ReplicatedStorage.Shared.Data.Constants)
 
 export type TransitionGuard = (context: CombatContext) -> boolean
 
