@@ -243,9 +243,11 @@ function CombatController._onBlockInput(self: CombatController, active: boolean)
 	end
 
 	-- Send to server
+	self._sequenceId += 1
 	self._network:FireServer("BlockRequest", {
 		Active = active,
 		Timestamp = workspace:GetServerTimeNow(),
+		SequenceId = self._sequenceId,
 	})
 end
 
@@ -266,8 +268,10 @@ function CombatController._onParryInput(self: CombatController)
 		self._stamina:Consume(Constants.STAMINA_COST_PARRY)
 	end
 
+	self._sequenceId += 1
 	self._network:FireServer("ParryRequest", {
 		Timestamp = workspace:GetServerTimeNow(),
+		SequenceId = self._sequenceId,
 	})
 end
 
@@ -304,9 +308,11 @@ function CombatController._onDodgeInput(self: CombatController, dodgeType: strin
 		self._stamina:Consume(cost)
 	end
 
+	self._sequenceId += 1
 	self._network:FireServer("DodgeRequest", {
 		DodgeType = dodgeType,
 		Timestamp = workspace:GetServerTimeNow(),
+		SequenceId = self._sequenceId,
 	})
 end
 
@@ -314,8 +320,10 @@ function CombatController._onUltimateInput(self: CombatController)
 	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
 	DebugLog.Log("Combat", `Ultimate input | Meter: 0 (not tracked client-side yet)`)
 
+	self._sequenceId += 1
 	self._network:FireServer("UltimateRequest", {
 		Timestamp = workspace:GetServerTimeNow(),
+		SequenceId = self._sequenceId,
 	})
 end
 
@@ -326,13 +334,22 @@ end
 function CombatController._onServerState(self: CombatController, data: any)
 	self._serverState = data
 
+	-- Only reconcile if the server has processed our latest input
+	-- If LastProcessedSequence < our sequenceId, the server hasn't seen our input yet
+	-- so its state is "behind" our prediction — don't snap back.
+	local serverProcessed = data.LastProcessedSequence or 0
+	if serverProcessed < self._sequenceId then
+		-- Server is behind, trust our prediction
+		return
+	end
+
 	-- Reconcile combat state if prediction was wrong
 	local serverCombatState = data.CombatState
 	local predictedState = self._stateMachine:GetState()
 
 	if serverCombatState ~= predictedState then
 		local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
-		DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState}`)
+		DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState} (seq: {serverProcessed}/{self._sequenceId})`)
 		-- Server wins — snap to authoritative state
 		self._stateMachine:ForceState(serverCombatState)
 	end

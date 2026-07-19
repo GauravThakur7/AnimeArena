@@ -404,6 +404,10 @@ function CombatService._handleBlockRequest(self: CombatService, player: Player, 
 		entity:StopBlock()
 		DebugLog.Log("Combat", `{player.Name} BLOCK END`)
 	end
+
+	if data.SequenceId then
+		entity.LastProcessedSequence = data.SequenceId
+	end
 end
 
 function CombatService._handleParryRequest(self: CombatService, player: Player, data: any)
@@ -418,6 +422,10 @@ function CombatService._handleParryRequest(self: CombatService, player: Player, 
 
 	local success = entity:TryParry()
 	DebugLog.Log("Combat", `{player.Name} PARRY attempt: {if success then "ACCEPTED" else "REJECTED"} | State: {entity.StateMachine:GetState()}`)
+
+	if data and typeof(data) == "table" and data.SequenceId then
+		entity.LastProcessedSequence = data.SequenceId
+	end
 end
 
 function CombatService._handleDodgeRequest(self: CombatService, player: Player, data: any)
@@ -449,6 +457,10 @@ function CombatService._handleDodgeRequest(self: CombatService, player: Player, 
 	end
 
 	DebugLog.Log("Combat", `{player.Name} DODGE ({dodgeType}): {if success then "ACCEPTED" else "REJECTED"} | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
+
+	if data.SequenceId then
+		entity.LastProcessedSequence = data.SequenceId
+	end
 end
 
 function CombatService._handleUltimateRequest(self: CombatService, player: Player, _data: any)
@@ -463,6 +475,10 @@ function CombatService._handleUltimateRequest(self: CombatService, player: Playe
 
 	local success = entity:TryUltimate()
 	DebugLog.Log("Combat", `{player.Name} ULTIMATE: {if success then "ACTIVATED" else "REJECTED (meter: " .. math.floor(entity.UltimateMeter) .. ")"}`)
+
+	if _data and typeof(_data) == "table" and _data.SequenceId then
+		entity.LastProcessedSequence = _data.SequenceId
+	end
 end
 
 -- ═══════════════════════════════════════════════════
