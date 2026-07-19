@@ -82,6 +82,8 @@ function CombatController.Init(self: CombatController, container: any)
 
 	-- Listen for hit confirmations
 	self._network:OnClientEvent("HitConfirm", function(data: any)
+		local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+		DebugLog.Log("HitConfirm", `Type: {data.HitType} | Damage: {data.Damage} | Attacker: {data.AttackerId} | Target: {data.TargetId}`)
 		self.OnHitReceived:Fire(data)
 	end)
 
@@ -176,6 +178,9 @@ function CombatController._onAttackInput(self: CombatController, attackType: str
 	-- Buffer the input
 	self._inputBuffer:Push(attackType, self._currentFrame)
 
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Attack input: {attackType} | State: {self._stateMachine:GetState()} | Stamina: {math.floor(self._stamina:GetCurrent())}`)
+
 	-- Try to predict locally
 	local context = {
 		stamina = self._stamina:GetCurrent(),
@@ -215,6 +220,9 @@ function CombatController._onAttackInput(self: CombatController, attackType: str
 end
 
 function CombatController._onBlockInput(self: CombatController, active: boolean)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Block input: Active={tostring(active)} | State: {self._stateMachine:GetState()}`)
+
 	-- Predict locally
 	if active then
 		local context = {
@@ -242,6 +250,9 @@ function CombatController._onBlockInput(self: CombatController, active: boolean)
 end
 
 function CombatController._onParryInput(self: CombatController)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Parry input | State: {self._stateMachine:GetState()} | Stamina: {math.floor(self._stamina:GetCurrent())}`)
+
 	local context = {
 		stamina = self._stamina:GetCurrent(),
 		poise = 100, hp = 100,
@@ -261,6 +272,9 @@ function CombatController._onParryInput(self: CombatController)
 end
 
 function CombatController._onDodgeInput(self: CombatController, dodgeType: string)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Dodge input: {dodgeType} | State: {self._stateMachine:GetState()} | Stamina: {math.floor(self._stamina:GetCurrent())}`)
+
 	local context = {
 		stamina = self._stamina:GetCurrent(),
 		poise = 100, hp = 100,
@@ -297,6 +311,9 @@ function CombatController._onDodgeInput(self: CombatController, dodgeType: strin
 end
 
 function CombatController._onUltimateInput(self: CombatController)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Log("Combat", `Ultimate input | Meter: 0 (not tracked client-side yet)`)
+
 	self._network:FireServer("UltimateRequest", {
 		Timestamp = workspace:GetServerTimeNow(),
 	})
@@ -314,6 +331,8 @@ function CombatController._onServerState(self: CombatController, data: any)
 	local predictedState = self._stateMachine:GetState()
 
 	if serverCombatState ~= predictedState then
+		local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+		DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState}`)
 		-- Server wins — snap to authoritative state
 		self._stateMachine:ForceState(serverCombatState)
 	end

@@ -16,6 +16,7 @@ local HitboxSystem = Shared.Modules.HitboxSystem
 local DamageCalculator = Shared.Modules.DamageCalculator
 local Validator = Shared.Util.Validator
 local RateLimiter = Shared.Util.RateLimiter
+local DebugLog = require(ReplicatedStorage.Shared.Util.DebugLog)
 
 local CombatEntity = require(script.Parent.Parent.Components.CombatEntity)
 
@@ -241,6 +242,8 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 		-- Grant ult meter to defender
 		targetEntity:AddUltimateMeter(Constants.ULTIMATE_GAIN_PER_PARRY)
 
+		DebugLog.Log("Combat", `PARRY! {targetPlayer.Name} parried {attacker.Name}'s attack`)
+
 		-- Notify clients
 		self._network:FireAllClients("HitConfirm", {
 			AttackerId = attacker.UserId,
@@ -289,6 +292,13 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 
 	-- Register combo hit
 	attackerEntity.Combo:RegisterHit()
+
+	local targetName = targetPlayer and targetPlayer.Name or "Unknown"
+	if isBlocked then
+		DebugLog.Log("Combat", `HIT (BLOCKED): {attacker.Name} → {targetName} | Chip: {damageResult.ChipDamage} | Target Stamina: {math.floor(targetEntity.Stamina:GetCurrent())}`)
+	else
+		DebugLog.Log("Combat", `HIT: {attacker.Name} → {targetName} | Damage: {damageResult.FinalDamage} | Zone: {hit.HurtboxZone} | Target HP: {targetEntity.HP}`)
+	end
 
 	-- Notify clients
 	self._network:FireAllClients("HitConfirm", {
@@ -364,6 +374,9 @@ function CombatService._handleAttackRequest(self: CombatService, player: Player,
 		entity.Combo:InputAttack(data.AttackType)
 		-- Clear hit history for new swing
 		self._hitbox:ClearHitHistory(player.UserId)
+		DebugLog.Log("Combat", `{player.Name} attack accepted: {data.AttackType} | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
+	else
+		DebugLog.Log("Combat", `{player.Name} attack REJECTED: {data.AttackType} | State: {entity.StateMachine:GetState()}`)
 	end
 end
 
@@ -386,8 +399,10 @@ function CombatService._handleBlockRequest(self: CombatService, player: Player, 
 
 	if data.Active then
 		entity:TryBlock()
+		DebugLog.Log("Combat", `{player.Name} BLOCK START | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
 	else
 		entity:StopBlock()
+		DebugLog.Log("Combat", `{player.Name} BLOCK END`)
 	end
 end
 
@@ -401,7 +416,8 @@ function CombatService._handleParryRequest(self: CombatService, player: Player, 
 		return
 	end
 
-	entity:TryParry()
+	local success = entity:TryParry()
+	DebugLog.Log("Combat", `{player.Name} PARRY attempt: {if success then "ACCEPTED" else "REJECTED"} | State: {entity.StateMachine:GetState()}`)
 end
 
 function CombatService._handleDodgeRequest(self: CombatService, player: Player, data: any)
@@ -422,14 +438,17 @@ function CombatService._handleDodgeRequest(self: CombatService, player: Player, 
 	end
 
 	local dodgeType = data.DodgeType
+	local success = false
 
 	if dodgeType == "Roll" then
-		entity:TryRoll()
+		success = entity:TryRoll()
 	elseif dodgeType == "Dash" then
-		entity:TryDash()
+		success = entity:TryDash()
 	elseif dodgeType == "Backstep" then
-		entity:TryBackstep()
+		success = entity:TryBackstep()
 	end
+
+	DebugLog.Log("Combat", `{player.Name} DODGE ({dodgeType}): {if success then "ACCEPTED" else "REJECTED"} | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
 end
 
 function CombatService._handleUltimateRequest(self: CombatService, player: Player, _data: any)
@@ -442,7 +461,8 @@ function CombatService._handleUltimateRequest(self: CombatService, player: Playe
 		return
 	end
 
-	entity:TryUltimate()
+	local success = entity:TryUltimate()
+	DebugLog.Log("Combat", `{player.Name} ULTIMATE: {if success then "ACTIVATED" else "REJECTED (meter: " .. math.floor(entity.UltimateMeter) .. ")"}`)
 end
 
 -- ═══════════════════════════════════════════════════
