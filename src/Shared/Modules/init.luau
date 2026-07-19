@@ -12,6 +12,9 @@ local StaminaManager = require(script.StaminaManager)
 local PoiseManager = require(script.PoiseManager)
 local DamageCalculator = require(script.DamageCalculator)
 local HitboxSystem = require(script.HitboxSystem)
+local PositionHistory = require(script.PositionHistory)
+local LagCompensation = require(script.LagCompensation)
+local DeltaCompressor = require(script.DeltaCompressor)
 
 return {
 	CombatStateMachine = CombatStateMachine,
@@ -22,4 +25,7 @@ return {
 	PoiseManager = PoiseManager,
 	DamageCalculator = DamageCalculator,
 	HitboxSystem = HitboxSystem,
+	PositionHistory = PositionHistory,
+	LagCompensation = LagCompensation,
+	DeltaCompressor = DeltaCompressor,
 }

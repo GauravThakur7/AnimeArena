@@ -19,6 +19,11 @@ local RateLimiter = Shared.Util.RateLimiter
 local DebugLog = require(ReplicatedStorage.Shared.Util.DebugLog)
 
 local CombatEntity = require(script.Parent.Parent.Components.CombatEntity)
+local LatencyTracker = require(script.Parent.Parent.Components.LatencyTracker)
+local PositionValidator = require(script.Parent.Parent.Components.PositionValidator)
+local PositionHistory = Shared.Modules.PositionHistory
+local LagCompensation = Shared.Modules.LagCompensation
+local DeltaCompressor = Shared.Modules.DeltaCompressor
 
 local CombatService = {}
 CombatService.__index = CombatService
@@ -42,6 +47,14 @@ function CombatService.new(network: any): CombatService
 	self._serverTick = 0
 	self._accumulator = 0
 	self.OnHitConfirmed = Signal.new()
+
+	-- Phase 3: Networking systems
+	self._latencyTracker = LatencyTracker.new(network)
+	self._positionValidator = PositionValidator.new()
+	self._lagCompensation = LagCompensation.new()
+	self._deltaCompressor = DeltaCompressor.new()
+	self._positionHistories = {} :: { [Player]: typeof(PositionHistory.new()) }
+
 	return self
 end
 
@@ -56,6 +69,7 @@ function CombatService.Init(self: CombatService, _container: any)
 	self._network:RegisterEvent("StateUpdate")
 	self._network:RegisterEvent("CombatStateSync")
 	self._network:RegisterUnreliableEvent("PositionSync")
+	self._network:RegisterUnreliableEvent("StateDelta")
 
 	-- Set rate limits
 	self._rateLimiter:SetLimit("Attack", 10)
@@ -83,6 +97,15 @@ function CombatService.Init(self: CombatService, _container: any)
 
 	self._network:OnServerEvent("UltimateRequest", function(player: Player, data: any)
 		self:_handleUltimateRequest(player, data)
+	end)
+
+	-- Phase 3: Initialize networking subsystems
+	self._latencyTracker:Init()
+	self._positionValidator:SetOnViolation(function(player: Player, distance: number, maxAllowed: number)
+		DebugLog.Warn("AntiCheat", `{player.Name} speed violation: moved {string.format("%.1f", distance)} studs (max {string.format("%.1f", maxAllowed)})`)
+	end)
+	self._positionValidator:SetOnFlag(function(player: Player, totalViolations: number)
+		DebugLog.Warn("AntiCheat", `{player.Name} FLAGGED for speed hacking ({totalViolations} violations)`)
 	end)
 
 	-- Player lifecycle
@@ -138,6 +161,9 @@ function CombatService._simulationTick(self: CombatService)
 	-- Update hitbox system tick
 	self._hitbox:SetTick(self._serverTick)
 
+	-- Tick latency tracker
+	self._latencyTracker:Tick()
+
 	-- Tick all entities
 	for player, entity in self._entities do
 		entity.Tick(entity, dt)
@@ -147,8 +173,24 @@ function CombatService._simulationTick(self: CombatService)
 		if char then
 			local root = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if root then
-				entity.Position = root.Position
+				local pos = root.Position
+				entity.Position = pos
 				entity.Rotation = root.CFrame
+
+				-- Record position history for lag compensation
+				local history = self._positionHistories[player]
+				if history then
+					history:Record(
+						self._serverTick,
+						pos,
+						root.CFrame,
+						entity.StateMachine:GetState(),
+						entity.StateMachine:HasIFrames()
+					)
+				end
+
+				-- Validate position (anti-speed/teleport)
+				self._positionValidator:Validate(player, pos, dt)
 			end
 		end
 
@@ -158,8 +200,13 @@ function CombatService._simulationTick(self: CombatService)
 		end
 	end
 
-	-- Broadcast state every tick
+	-- Broadcast state with delta compression
 	self:_broadcastState()
+
+	-- Broadcast positions for client interpolation (20Hz = every 3rd tick)
+	if self._serverTick % 3 == 0 then
+		self:_broadcastPositions()
+	end
 
 	-- Prune hit history periodically
 	if self._serverTick % 60 == 0 then
@@ -168,8 +215,13 @@ function CombatService._simulationTick(self: CombatService)
 end
 
 function CombatService._runHitDetection(self: CombatService, attacker: Player, attackerEntity: any)
-	-- Build target hurtbox data
-	local targets = {}
+	-- Get attacker latency for rewind calculation
+	local attackerLatency = self._latencyTracker:GetLatency(attacker)
+	local rewindTick = self._lagCompensation:CalculateRewindTick(self._serverTick, attackerLatency)
+
+	local hitboxSize = Vector3.new(5, 4, 6) -- default (overridden by weapon data in Phase 5)
+	local hitboxOffset = Vector3.new(0, 0, -3) -- forward offset
+
 	for targetPlayer, targetEntity in self._entities do
 		if targetPlayer == attacker then
 			continue
@@ -178,35 +230,51 @@ function CombatService._runHitDetection(self: CombatService, attacker: Player, a
 			continue
 		end
 
-		local char = targetPlayer.Character
-		if not char then
-			continue
-		end
-		local root = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not root then
+		-- Skip if already hit this swing
+		local hitKey = `{attacker.UserId}_{targetPlayer.UserId}_{self._serverTick}`
+		if self._hitbox._hitHistory[hitKey] then
 			continue
 		end
 
-		table.insert(targets, {
-			PlayerId = targetPlayer.UserId,
-			Position = root.Position,
-			Size = Vector3.new(4, 5, 4), -- approximate character bounds
-			Zone = "Body",
-			IsInvulnerable = not targetEntity.StateMachine:IsVulnerable(),
-		})
-	end
+		-- Use lag compensation: check against target's historical position
+		local targetHistory = self._positionHistories[targetPlayer]
+		if not targetHistory then
+			continue
+		end
 
-	-- Check hitbox
-	local hitResults = self._hitbox:CheckHit({
-		Origin = attackerEntity.Rotation,
-		Size = Vector3.new(5, 4, 6), -- default hitbox size (overridden by weapon data)
-		Offset = Vector3.new(0, 0, -3), -- forward offset
-		OwnerId = attacker.UserId,
-	}, targets)
+		local targetSize = Vector3.new(4, 5, 4) -- approximate character bounds
+		local result = self._lagCompensation:ValidateHit(
+			attackerEntity.Rotation,
+			hitboxSize,
+			hitboxOffset,
+			targetHistory,
+			rewindTick,
+			targetSize
+		)
 
-	-- Process hits
-	for _, hit in hitResults do
-		self:_processHit(attacker, attackerEntity, hit)
+		if result.Hit and not result.WasInvulnerable then
+			-- Determine hurtbox zone from hit point
+			local hitPosition = result.RewindPosition or targetEntity.Position
+			local zone = "Body"
+			if result.RewindPosition then
+				local relY = (attackerEntity.Position.Y - result.RewindPosition.Y) / targetSize.Y + 0.5
+				if relY >= 0.75 then
+					zone = "Head"
+				elseif relY < 0.35 then
+					zone = "Legs"
+				end
+			end
+
+			-- Record hit to prevent double-hit
+			self._hitbox._hitHistory[hitKey] = self._serverTick
+
+			self:_processHit(attacker, attackerEntity, {
+				TargetId = targetPlayer.UserId,
+				HitPosition = hitPosition,
+				HurtboxZone = zone,
+				Distance = (attackerEntity.Position - hitPosition).Magnitude,
+			})
+		end
 	end
 end
 
@@ -314,10 +382,41 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 end
 
 function CombatService._broadcastState(self: CombatService)
+	local isFullSync = (self._serverTick % Constants.TICK_RATE == 0) -- full sync every second
+
 	for player, entity in self._entities do
 		local snapshot = entity:GetSnapshot()
 		snapshot.Tick = self._serverTick
-		self._network:FireClient("StateUpdate", player, snapshot)
+
+		if isFullSync then
+			-- Reliable full state sync (once per second for recovery from dropped packets)
+			self._deltaCompressor:InvalidatePlayer(player.UserId)
+			self._network:FireClient("StateUpdate", player, snapshot)
+		else
+			-- Unreliable delta-compressed update (60Hz, dropped packets acceptable)
+			local delta = self._deltaCompressor:Compress(player.UserId, snapshot)
+			if delta then
+				self._network:FireClientUnreliable("StateDelta", player, delta)
+			end
+		end
+	end
+end
+
+function CombatService._broadcastPositions(self: CombatService)
+	-- Send all player positions to all other players (for client interpolation)
+	-- Uses unreliable remote — dropped packets are fine, next update arrives in 50ms
+	for player, entity in self._entities do
+		local posData = {
+			UserId = player.UserId,
+			Position = entity.Position,
+			Tick = self._serverTick,
+		}
+		-- Send to all OTHER players
+		for otherPlayer in self._entities do
+			if otherPlayer ~= player then
+				self._network:FireClientUnreliable("PositionSync", otherPlayer, posData)
+			end
+		end
 	end
 end
 
@@ -493,8 +592,27 @@ function CombatService._createEntity(self: CombatService, player: Player)
 	local entity = CombatEntity.new(player)
 	self._entities[player] = entity
 
+	-- Phase 3: Create position history buffer
+	self._positionHistories[player] = PositionHistory.new()
+
+	-- Phase 3: Register with position validator
+	local char = player.Character
+	local initialPos = if char and char:FindFirstChild("HumanoidRootPart")
+		then (char:FindFirstChild("HumanoidRootPart") :: BasePart).Position
+		else Vector3.zero
+	self._positionValidator:AddPlayer(player, initialPos)
+
+	-- Re-register on respawn
+	player.CharacterAdded:Connect(function(newChar)
+		local root = newChar:WaitForChild("HumanoidRootPart", 5) :: BasePart?
+		if root then
+			self._positionValidator:ResetViolations(player, root.Position)
+		end
+	end)
+
 	entity.OnDeath:Connect(function()
 		-- Death handling (Phase 13 match system)
+		self._deltaCompressor:InvalidatePlayer(player.UserId)
 	end)
 end
 
@@ -504,6 +622,11 @@ function CombatService._removeEntity(self: CombatService, player: Player)
 		entity:Destroy()
 		self._entities[player] = nil
 	end
+
+	-- Phase 3: Clean up networking state
+	self._positionHistories[player] = nil
+	self._positionValidator:RemovePlayer(player)
+	self._deltaCompressor:RemovePlayer(player.UserId)
 end
 
 return CombatService

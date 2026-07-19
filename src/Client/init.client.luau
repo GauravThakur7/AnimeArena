@@ -26,6 +26,8 @@ local CameraController = require(script.Controllers.CameraController)
 local AnimationController = require(script.Controllers.AnimationController)
 local VFXController = require(script.Controllers.VFXController)
 local AudioController = require(script.Controllers.AudioController)
+local LatencyResponder = require(script.Controllers.LatencyResponder)
+local InterpolationController = require(script.Controllers.InterpolationController)
 
 -- ═══════════════════════════════════════════════════
 -- BOOTSTRAP
@@ -50,6 +52,8 @@ container:Register("CameraController", CameraController.new())
 container:Register("AnimationController", AnimationController.new())
 container:Register("VFXController", VFXController.new())
 container:Register("AudioController", AudioController.new())
+container:Register("LatencyResponder", LatencyResponder.new(network))
+container:Register("InterpolationController", InterpolationController.new(network))
 
 -- Initialize all (set up listeners, prepare state)
 container:InitAll()

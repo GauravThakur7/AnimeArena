@@ -75,8 +75,13 @@ function CombatController.Init(self: CombatController, container: any)
 		self:_onUltimateInput()
 	end)
 
-	-- Listen for server state updates
+	-- Listen for server state updates (reliable full sync)
 	self._network:OnClientEvent("StateUpdate", function(data: any)
+		self:_onServerState(data)
+	end)
+
+	-- Listen for unreliable delta state updates (60Hz)
+	self._network:OnClientUnreliableEvent("StateDelta", function(data: any)
 		self:_onServerState(data)
 	end)
 
@@ -332,24 +337,46 @@ end
 -- ═══════════════════════════════════════════════════
 
 function CombatController._onServerState(self: CombatController, data: any)
-	self._serverState = data
+	-- Apply delta: server may send partial state (only changed fields)
+	-- Reconstruct full state from delta on top of last known
+	if self._serverState then
+		local fullState = {
+			Tick = data.Tick or self._serverState.Tick or 0,
+			CombatState = data.CombatState or self._serverState.CombatState or "Idle",
+			HP = data.HP or self._serverState.HP or 100,
+			Stamina = data.Stamina or self._serverState.Stamina or 100,
+			Poise = data.Poise or self._serverState.Poise or 100,
+			Position = data.Position or self._serverState.Position or Vector3.zero,
+			UltimateMeter = data.UltimateMeter or self._serverState.UltimateMeter or 0,
+			LastProcessedSequence = data.LastProcessedSequence or self._serverState.LastProcessedSequence or 0,
+			ComboCount = data.ComboCount or self._serverState.ComboCount or 0,
+		}
+		self._serverState = fullState
+	else
+		self._serverState = data
+	end
+
+	local state = self._serverState
 
 	-- Only reconcile if the server has processed our latest input
-	local serverProcessed = data.LastProcessedSequence or 0
+	local serverProcessed = state.LastProcessedSequence or 0
 	if serverProcessed < self._sequenceId then
 		return
 	end
 
-	local serverCombatState = data.CombatState
+	local serverCombatState = state.CombatState
 	local predictedState = self._stateMachine:GetState()
 
 	if serverCombatState == predictedState then
-		return -- States match, nothing to do
+		-- Reconcile stamina silently
+		local serverStamina = state.Stamina
+		if serverStamina and math.abs(serverStamina - self._stamina:GetCurrent()) > 5 then
+			self._stamina:SetCurrent(serverStamina)
+		end
+		return
 	end
 
 	-- Don't reconcile timing differences on timed states.
-	-- If one side is Idle and the other is in a timed action that naturally returns to Idle
-	-- (Attacking, Rolling, Dashing, etc.), this is just a timing difference, not a real conflict.
 	local timedStates = {
 		Attacking = true,
 		HeavyAttacking = true,
@@ -364,7 +391,6 @@ function CombatController._onServerState(self: CombatController, data: any)
 		or (serverCombatState == "Idle" and timedStates[predictedState])
 
 	if isTimingDifference then
-		-- Trust the server but don't log as a warning — this is normal timing drift
 		self._stateMachine:ForceState(serverCombatState)
 		return
 	end
@@ -374,10 +400,9 @@ function CombatController._onServerState(self: CombatController, data: any)
 	DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState} (seq: {serverProcessed}/{self._sequenceId})`)
 	self._stateMachine:ForceState(serverCombatState)
 
-	-- Reconcile stamina
-	local serverStamina = data.Stamina
-	local predictedStamina = self._stamina:GetCurrent()
-	if math.abs(serverStamina - predictedStamina) > 5 then
+	-- Reconcile stamina on genuine mismatch
+	local serverStamina = state.Stamina
+	if serverStamina and math.abs(serverStamina - self._stamina:GetCurrent()) > 5 then
 		self._stamina:SetCurrent(serverStamina)
 	end
 end
