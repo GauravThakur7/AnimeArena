@@ -1,0 +1,47 @@
+{
+	"name": "AnimeArena",
+	"tree": {
+		"$className": "DataModel",
+
+		"ServerScriptService": {
+			"$className": "ServerScriptService",
+			"Server": {
+				"$path": "src/Server"
+			}
+		},
+
+		"StarterPlayer": {
+			"$className": "StarterPlayer",
+			"StarterPlayerScripts": {
+				"$className": "StarterPlayerScripts",
+				"Client": {
+					"$path": "src/Client"
+				}
+			}
+		},
+
+		"ReplicatedStorage": {
+			"$className": "ReplicatedStorage",
+			"Shared": {
+				"$path": "src/Shared"
+			},
+			"Packages": {
+				"$path": "Packages"
+			}
+		},
+
+		"ReplicatedFirst": {
+			"$className": "ReplicatedFirst",
+			"UI": {
+				"$path": "src/UI"
+			}
+		},
+
+		"Workspace": {
+			"$className": "Workspace",
+			"$properties": {
+				"StreamingEnabled": true
+			}
+		}
+	}
+}

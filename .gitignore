@@ -1,0 +1,22 @@
+# Wally packages (installed via wally install)
+Packages/
+wally.lock
+
+# Roblox Studio
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+build/
+out/
