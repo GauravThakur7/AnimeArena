@@ -335,24 +335,45 @@ function CombatController._onServerState(self: CombatController, data: any)
 	self._serverState = data
 
 	-- Only reconcile if the server has processed our latest input
-	-- If LastProcessedSequence < our sequenceId, the server hasn't seen our input yet
-	-- so its state is "behind" our prediction — don't snap back.
 	local serverProcessed = data.LastProcessedSequence or 0
 	if serverProcessed < self._sequenceId then
-		-- Server is behind, trust our prediction
 		return
 	end
 
-	-- Reconcile combat state if prediction was wrong
 	local serverCombatState = data.CombatState
 	local predictedState = self._stateMachine:GetState()
 
-	if serverCombatState ~= predictedState then
-		local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
-		DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState} (seq: {serverProcessed}/{self._sequenceId})`)
-		-- Server wins — snap to authoritative state
-		self._stateMachine:ForceState(serverCombatState)
+	if serverCombatState == predictedState then
+		return -- States match, nothing to do
 	end
+
+	-- Don't reconcile timing differences on timed states.
+	-- If one side is Idle and the other is in a timed action that naturally returns to Idle
+	-- (Attacking, Rolling, Dashing, etc.), this is just a timing difference, not a real conflict.
+	local timedStates = {
+		Attacking = true,
+		HeavyAttacking = true,
+		Rolling = true,
+		Dashing = true,
+		Backstepping = true,
+		Sidestepping = true,
+		Parrying = true,
+	}
+
+	local isTimingDifference = (predictedState == "Idle" and timedStates[serverCombatState])
+		or (serverCombatState == "Idle" and timedStates[predictedState])
+
+	if isTimingDifference then
+		-- Trust the server but don't log as a warning — this is normal timing drift
+		self._stateMachine:ForceState(serverCombatState)
+		return
+	end
+
+	-- Genuine mismatch (e.g., we thought Attacking but server says Staggered)
+	local DebugLog = require(ReplicatedStorage:WaitForChild("Shared").Util.DebugLog)
+	DebugLog.Warn("Reconcile", `State mismatch! Predicted: {predictedState} → Server: {serverCombatState} (seq: {serverProcessed}/{self._sequenceId})`)
+	self._stateMachine:ForceState(serverCombatState)
+end
 
 	-- Reconcile stamina
 	local serverStamina = data.Stamina
