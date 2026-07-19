@@ -191,7 +191,22 @@ function CombatService._simulationTick(self: CombatService)
 				end
 
 				-- Validate position (anti-speed/teleport)
-				self._positionValidator:Validate(player, pos, dt)
+				-- Allow higher speed during movement actions (dash/roll/slide)
+				local entityState = entity.StateMachine:GetState()
+				local actionStates = {
+					Rolling = true,
+					Dashing = true,
+					Backstepping = true,
+					Sliding = true,
+					Launched = true,
+					WallBounce = true,
+					GroundBounce = true,
+					Ragdoll = true,
+				}
+				local maxSpeed = if actionStates[entityState]
+					then Constants.BASE_SPRINT_SPEED * 4 -- movement actions can be very fast
+					else Constants.BASE_SPRINT_SPEED
+				self._positionValidator:Validate(player, pos, dt, maxSpeed)
 			end
 		end
 
