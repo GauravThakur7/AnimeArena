@@ -191,22 +191,29 @@ function CombatService._simulationTick(self: CombatService)
 				end
 
 				-- Validate position (anti-speed/teleport)
-				-- Allow higher speed during movement actions (dash/roll/slide)
-				local entityState = entity.StateMachine:GetState()
-				local actionStates = {
-					Rolling = true,
-					Dashing = true,
-					Backstepping = true,
-					Sliding = true,
-					Launched = true,
-					WallBounce = true,
-					GroundBounce = true,
-					Ragdoll = true,
-				}
-				local maxSpeed = if actionStates[entityState]
-					then Constants.BASE_SPRINT_SPEED * 4 -- movement actions can be very fast
-					else Constants.BASE_SPRINT_SPEED
-				self._positionValidator:Validate(player, pos, dt, maxSpeed)
+				-- Skip validation briefly after a dodge action (displacement is legitimate)
+				local lastDodgeTick = entity._lastDodgeTick or 0
+				local ticksSinceDodge = self._serverTick - lastDodgeTick
+				if ticksSinceDodge < 30 then -- ~0.5 seconds grace after dodge
+					-- Exempt: recently dodged, high velocity is expected
+					self._positionValidator:ResetViolations(player, pos)
+				else
+					local entityState = entity.StateMachine:GetState()
+					local actionStates = {
+						Rolling = true,
+						Dashing = true,
+						Backstepping = true,
+						Sliding = true,
+						Launched = true,
+						WallBounce = true,
+						GroundBounce = true,
+						Ragdoll = true,
+					}
+					local maxSpeed = if actionStates[entityState]
+						then Constants.BASE_SPRINT_SPEED * 4
+						else Constants.BASE_SPRINT_SPEED
+					self._positionValidator:Validate(player, pos, dt, maxSpeed)
+				end
 			end
 		end
 
@@ -569,6 +576,10 @@ function CombatService._handleDodgeRequest(self: CombatService, player: Player, 
 		success = entity:TryDash()
 	elseif dodgeType == "Backstep" then
 		success = entity:TryBackstep()
+	end
+
+	if success then
+		entity._lastDodgeTick = self._serverTick
 	end
 
 	DebugLog.Log("Combat", `{player.Name} DODGE ({dodgeType}): {if success then "ACCEPTED" else "REJECTED"} | Stamina: {math.floor(entity.Stamina:GetCurrent())}`)
