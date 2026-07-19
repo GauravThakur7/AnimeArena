@@ -177,34 +177,12 @@ function MovementController._movementTick(self: MovementController, dt: number)
 	-- Read movement input (WASD / stick)
 	local moveDir = self:_getInputDirection()
 
-	-- Determine target speed based on sprint state
+	-- Constant run speed (no sprint in arena combat)
 	local targetSpeed: number
 	if moveDir.Magnitude < 0.1 then
 		targetSpeed = 0
-	elseif self._isSprinting and self:_canSprint() then
-		targetSpeed = Constants.BASE_SPRINT_SPEED
 	else
 		targetSpeed = Constants.BASE_RUN_SPEED
-	end
-
-	-- Sprint toggle: hold shift
-	local wantsSprint = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-		and moveDir.Magnitude > 0.1
-
-	-- Sprint stamina drain
-	if wantsSprint and self:_canSprint() then
-		local staminaOk = self._combatController:GetStamina() > 0
-		if staminaOk then
-			self._isSprinting = true
-			-- Drain stamina (consume via server, predict locally)
-			self._combatController._stamina:Consume(Constants.STAMINA_COST_SPRINT_PER_SECOND * dt)
-		else
-			-- Out of stamina, force back to run
-			self._isSprinting = false
-			targetSpeed = Constants.BASE_RUN_SPEED
-		end
-	else
-		self._isSprinting = false
 	end
 
 	-- Update momentum
@@ -485,18 +463,6 @@ function MovementController._canMove(self: MovementController, combatState: stri
 		[CombatState.GroundBounce] = true,
 	}
 	return not lockedStates[combatState]
-end
-
-function MovementController._canSprint(self: MovementController): boolean
-	local combatState = self._combatController:GetState()
-	-- Can sprint in idle and movement states, not during attacks/blocks
-	local sprintable = {
-		[CombatState.Idle] = true,
-		[CombatState.Walking] = true,
-		[CombatState.Running] = true,
-		[CombatState.Sprinting] = true,
-	}
-	return sprintable[combatState] == true
 end
 
 function MovementController._onHumanoidStateChanged(self: MovementController, newState: Enum.HumanoidStateType)

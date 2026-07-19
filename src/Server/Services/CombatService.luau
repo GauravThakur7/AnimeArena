@@ -190,30 +190,8 @@ function CombatService._simulationTick(self: CombatService)
 					)
 				end
 
-				-- Validate position (anti-speed/teleport)
-				-- Skip validation briefly after a dodge action (displacement is legitimate)
-				local lastDodgeTick = entity._lastDodgeTick or 0
-				local ticksSinceDodge = self._serverTick - lastDodgeTick
-				if ticksSinceDodge < 30 then -- ~0.5 seconds grace after dodge
-					-- Exempt: recently dodged, high velocity is expected
-					self._positionValidator:ResetViolations(player, pos)
-				else
-					local entityState = entity.StateMachine:GetState()
-					local actionStates = {
-						Rolling = true,
-						Dashing = true,
-						Backstepping = true,
-						Sliding = true,
-						Launched = true,
-						WallBounce = true,
-						GroundBounce = true,
-						Ragdoll = true,
-					}
-					local maxSpeed = if actionStates[entityState]
-						then Constants.BASE_SPRINT_SPEED * 4
-						else Constants.BASE_SPRINT_SPEED
-					self._positionValidator:Validate(player, pos, dt, maxSpeed)
-				end
+				-- Position validation disabled during development (Phase 18 will tune properly)
+				-- self._positionValidator:Validate(player, pos, dt)
 			end
 		end
 
