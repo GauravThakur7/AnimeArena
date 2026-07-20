@@ -85,8 +85,11 @@ function CombatController.Init(self: CombatController, container: any)
 	end)
 
 	-- Listen for unreliable delta state updates (60Hz)
-	self._network:OnClientUnreliableEvent("StateDelta", function(data: any)
-		self:_onServerState(data)
+	-- Wrapped in task.spawn to prevent WaitForChild from blocking Init
+	task.spawn(function()
+		self._network:OnClientUnreliableEvent("StateDelta", function(data: any)
+			self:_onServerState(data)
+		end)
 	end)
 
 	-- Listen for hit confirmations

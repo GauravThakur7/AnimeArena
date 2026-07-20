@@ -47,11 +47,13 @@ end
 
 function InterpolationController.Init(self: InterpolationController, _container: any)
 	-- Listen for position sync from other players
-	self._network:OnClientUnreliableEvent("PositionSync", function(data: any)
-		if typeof(data) ~= "table" then
-			return
-		end
-		self:_onPositionReceived(data)
+	task.spawn(function()
+		self._network:OnClientUnreliableEvent("PositionSync", function(data: any)
+			if typeof(data) ~= "table" then
+				return
+			end
+			self:_onPositionReceived(data)
+		end)
 	end)
 
 	-- Clean up buffers when players leave
