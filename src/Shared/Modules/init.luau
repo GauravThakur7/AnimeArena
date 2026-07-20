@@ -18,6 +18,7 @@ local DeltaCompressor = require(script.DeltaCompressor)
 local MomentumSystem = require(script.MomentumSystem)
 local AbilitySystem = require(script.AbilitySystem)
 local PassiveSystem = require(script.PassiveSystem)
+local AnimationStateMachine = require(script.AnimationStateMachine)
 
 return {
 	CombatStateMachine = CombatStateMachine,
@@ -34,4 +35,5 @@ return {
 	MomentumSystem = MomentumSystem,
 	AbilitySystem = AbilitySystem,
 	PassiveSystem = PassiveSystem,
+	AnimationStateMachine = AnimationStateMachine,
 }
