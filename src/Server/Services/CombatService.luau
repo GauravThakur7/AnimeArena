@@ -22,6 +22,7 @@ local CombatEntity = require(script.Parent.Parent.Components.CombatEntity)
 local LatencyTracker = require(script.Parent.Parent.Components.LatencyTracker)
 local PositionValidator = require(script.Parent.Parent.Components.PositionValidator)
 local WeaponHandler = require(script.Parent.Parent.Components.WeaponHandler)
+local CharacterHandler = require(script.Parent.Parent.Components.CharacterHandler)
 local PositionHistory = Shared.Modules.PositionHistory
 local LagCompensation = Shared.Modules.LagCompensation
 local DeltaCompressor = Shared.Modules.DeltaCompressor
@@ -56,6 +57,7 @@ function CombatService.new(network: any): CombatService
 	self._deltaCompressor = DeltaCompressor.new()
 	self._positionHistories = {} :: { [Player]: typeof(PositionHistory.new()) }
 	self._weaponHandlers = {} :: { [Player]: typeof(WeaponHandler.new("")) }
+	self._characterHandlers = {} :: { [Player]: typeof(CharacterHandler.new(nil :: any)) }
 
 	return self
 end
@@ -71,6 +73,7 @@ function CombatService.Init(self: CombatService, _container: any)
 	self._network:RegisterEvent("HitConfirm")
 	self._network:RegisterEvent("StateUpdate")
 	self._network:RegisterEvent("CombatStateSync")
+	self._network:RegisterEvent("CharacterSelect")
 	self._network:RegisterUnreliableEvent("PositionSync")
 	self._network:RegisterUnreliableEvent("StateDelta")
 	self._network:RegisterUnreliableEvent("MovementState")
@@ -106,6 +109,10 @@ function CombatService.Init(self: CombatService, _container: any)
 
 	self._network:OnServerEvent("SpecialRequest", function(player: Player, data: any)
 		self:_handleSpecialRequest(player, data)
+	end)
+
+	self._network:OnServerEvent("CharacterSelect", function(player: Player, data: any)
+		self:_handleCharacterSelect(player, data)
 	end)
 
 	-- Phase 3: Initialize networking subsystems
@@ -334,6 +341,11 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 		-- Grant ult meter to defender
 		targetEntity:AddUltimateMeter(Constants.ULTIMATE_GAIN_PER_PARRY)
 
+		-- Passive: Storm Conductor — activate parry damage boost on defender
+		if targetEntity._parryDamageBoostMult then
+			targetEntity._parryDamageBoostActive = true
+		end
+
 		DebugLog.Log("Combat", `PARRY! {targetPlayer.Name} parried {attacker.Name}'s attack`)
 
 		-- Notify clients
@@ -355,6 +367,20 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 	local poiseDamage = if attackData then attackData.PoiseDamage else 20
 	local hitstunFrames = if attackData then attackData.FrameData.Hitstun else 18
 
+	-- Passive: Parry Damage Boost (Storm Conductor)
+	local attackerBuff = 1.0
+	if attackerEntity._parryDamageBoostActive then
+		attackerBuff = attackerEntity._parryDamageBoostMult or 1.3
+		attackerEntity._parryDamageBoostActive = false
+		DebugLog.Log("Combat", `{attacker.Name} consumed parry damage boost ({attackerBuff}x)`)
+	end
+
+	-- Passive: Blood Frenzy (combo speed boost applied as damage bonus: 5% per combo hit, max 25%)
+	if attackerEntity._comboSpeedBoostPerHit then
+		local comboBonus = math.min(0.25, attackerEntity.Combo:GetHitCount() * attackerEntity._comboSpeedBoostPerHit)
+		attackerBuff = attackerBuff + comboBonus
+	end
+
 	local damageResult = DamageCalculator.Calculate({
 		BaseDamage = baseDamage,
 		ComboHitNumber = attackerEntity.Combo:GetHitCount(),
@@ -363,7 +389,7 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 		HurtboxZone = hit.HurtboxZone,
 		IsCritical = false,
 		PoiseDamage = poiseDamage,
-		AttackerBuff = 1.0,
+		AttackerBuff = attackerBuff,
 		DefenderBuff = 1.0,
 	})
 
@@ -390,6 +416,18 @@ function CombatService._processHit(self: CombatService, attacker: Player, attack
 
 	-- Register combo hit
 	attackerEntity.Combo:RegisterHit()
+
+	-- Passive: Life Drain (Abyss Reaper) — heal 15% of damage dealt
+	if attackerEntity._hasLifeDrain and not isBlocked and damageResult.FinalDamage > 0 then
+		local healAmount = math.floor(damageResult.FinalDamage * 0.15)
+		attackerEntity.HP = math.min(attackerEntity.MaxHP, attackerEntity.HP + healAmount)
+	end
+
+	-- Passive: Blood Frenzy reset on taking damage (target loses combo speed if they have it)
+	if targetEntity._comboSpeedBoostPerHit then
+		-- Taking damage resets the attacker's frenzy stacks (if target was comboing)
+		-- This is handled by combo drop on stagger — no extra logic needed
+	end
 
 	local targetName = targetPlayer and targetPlayer.Name or "Unknown"
 	if isBlocked then
@@ -704,6 +742,59 @@ function CombatService._handleSpecialRequest(self: CombatService, player: Player
 	end
 end
 
+function CombatService._handleCharacterSelect(self: CombatService, player: Player, data: any)
+	if not Validator.IsTable(data) then
+		return
+	end
+	if not Validator.HasField(data, "CharacterId", "string") then
+		return
+	end
+
+	local charHandler = self._characterHandlers[player]
+	if not charHandler then
+		return
+	end
+
+	local entity = self._entities[player]
+	if not entity then
+		return
+	end
+
+	-- Only allow character selection when idle (not mid-combat)
+	if entity.StateMachine:GetState() ~= "Idle" then
+		DebugLog.Log("Combat", `{player.Name} character select REJECTED (not idle)`)
+		return
+	end
+
+	-- Validate character exists and is unlocked
+	local success = charHandler:SelectCharacter(data.CharacterId)
+	if not success then
+		DebugLog.Log("Combat", `{player.Name} character select REJECTED (invalid: {data.CharacterId})`)
+		return
+	end
+
+	if not charHandler:IsUnlocked() then
+		DebugLog.Log("Combat", `{player.Name} character select REJECTED (locked: {data.CharacterId})`)
+		charHandler:SelectCharacter("StormRonin") -- revert
+		return
+	end
+
+	-- Reset entity and apply new character stats
+	entity:Reset()
+	charHandler:ApplyToEntity(entity)
+
+	-- Switch weapon to character's default
+	local weaponHandler = self._weaponHandlers[player]
+	if weaponHandler then
+		weaponHandler:SetWeapon(charHandler:GetWeaponId())
+	end
+
+	-- Reset ability system for new weapon
+	entity._abilitySystem = nil
+
+	DebugLog.Log("Combat", `{player.Name} selected character: {data.CharacterId} ({charHandler:GetWeaponId()})`)
+end
+
 -- ═══════════════════════════════════════════════════
 -- ENTITY MANAGEMENT
 -- ═══════════════════════════════════════════════════
@@ -721,6 +812,27 @@ function CombatService._createEntity(self: CombatService, player: Player)
 
 	-- Phase 5: Create weapon handler (default to Katana)
 	self._weaponHandlers[player] = WeaponHandler.new("Katana")
+
+	-- Phase 6: Create character handler and apply stats
+	local charHandler = CharacterHandler.new(player, "StormRonin")
+	self._characterHandlers[player] = charHandler
+	charHandler:ApplyToEntity(entity)
+
+	-- Set weapon from character's default
+	local weaponId = charHandler:GetWeaponId()
+	self._weaponHandlers[player]:SetWeapon(weaponId)
+
+	-- Apply character base speed to Humanoid (client movement reads this)
+	local function applySpeed(character: Model)
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = charHandler:GetBaseSpeed()
+		end
+	end
+	if player.Character then
+		applySpeed(player.Character)
+	end
+	player.CharacterAdded:Connect(applySpeed)
 
 	-- Phase 3: Register with position validator
 	local char = player.Character
@@ -755,6 +867,7 @@ function CombatService._removeEntity(self: CombatService, player: Player)
 	self._positionValidator:RemovePlayer(player)
 	self._deltaCompressor:RemovePlayer(player.UserId)
 	self._weaponHandlers[player] = nil
+	self._characterHandlers[player] = nil
 end
 
 return CombatService
